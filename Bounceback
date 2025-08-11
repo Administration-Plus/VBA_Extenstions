@@ -1,0 +1,98 @@
+Option Explicit
+
+Sub ExtractEmailsFromUnreadDeletedItems()
+    
+    ' === 1. Set up Outlook objects ===
+    Dim olNs As Outlook.NameSpace
+    Dim deletedItemsFolder As Outlook.Folder
+    Dim mailItem As Outlook.mailItem
+    
+    Set olNs = Application.GetNamespace("MAPI")
+    Set deletedItemsFolder = olNs.GetDefaultFolder(olFolderDeletedItems)
+    
+    ' === 2. Create Excel objects (late binding) ===
+    Dim xlApp As Object
+    Dim xlWkb As Object
+    Dim xlSht As Object
+    
+    On Error Resume Next
+    Set xlApp = GetObject(Class:="Excel.Application")
+    If xlApp Is Nothing Then
+        Set xlApp = CreateObject("Excel.Application")
+    End If
+    On Error GoTo 0
+    
+    ' Make Excel visible or hide it (your choice)
+    xlApp.Visible = True
+    
+    ' Create a brand-new workbook
+    Set xlWkb = xlApp.Workbooks.Add
+    Set xlSht = xlWkb.Sheets(1)
+    xlSht.Name = "Extracted Emails"
+    
+    ' Set up a header (optional)
+    xlSht.Cells(1, 1).Value = "Email Address"
+    
+    Dim nextRow As Long
+    nextRow = 2  ' Start writing data from row 2
+    
+    ' === 3. Iterate through deleted items ===
+    Dim iItem As Long
+    For iItem = deletedItemsFolder.items.Count To 1 Step -1
+        
+        If TypeName(deletedItemsFolder.items(iItem)) = "MailItem" Then
+            Set mailItem = deletedItemsFolder.items(iItem)
+            
+            ' Only process unread messages
+            If mailItem.UnRead = True Then
+                
+                Dim emailList As Collection
+                Set emailList = ExtractAllEmails(mailItem.Body)
+                
+                ' Write each extracted email to Excel
+                Dim addr As Variant
+                For Each addr In emailList
+                    xlSht.Cells(nextRow, 1).Value = addr
+                    nextRow = nextRow + 1
+                Next addr
+            End If
+        End If
+    Next iItem
+    
+    ' === 4. Cleanup ===
+    Set mailItem = Nothing
+    Set deletedItemsFolder = Nothing
+    Set olNs = Nothing
+    
+    ' Optional: you can save the workbook or prompt the user to save
+    ' e.g.: xlWkb.SaveAs "C:\path\to\ExtractedEmails.xlsx"
+    ' or just leave it open for the user
+    
+    MsgBox "Finished extracting emails!", vbInformation
+
+End Sub
+
+Private Function ExtractAllEmails(ByVal text As String) As Collection
+    ' Uses a RegEx to return all email addresses found in `text`
+    ' Returns them as a collection of strings
+    
+    Dim re As Object ' VBScript.RegExp
+    Dim matches As Object
+    Dim matchItem As Object
+    
+    Set ExtractAllEmails = New Collection
+    
+    ' Create the RegExp object
+    Set re = CreateObject("VBScript.RegExp")
+    re.Pattern = "[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}"
+    re.IgnoreCase = True
+    re.Global = True
+    
+    If re.Test(text) Then
+        Set matches = re.Execute(text)
+        For Each matchItem In matches
+            ExtractAllEmails.Add matchItem
+        Next matchItem
+    End If
+End Function
+
