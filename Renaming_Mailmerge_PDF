@@ -1,0 +1,60 @@
+Sub SaveMergedAsPDF()
+
+    Dim mainDoc As Document, targetDoc As Document
+    Dim dbPath As String
+    Dim recordCount As Long, i As Long
+    Dim participantID As String, firstName As String, lastName As String
+    Dim pdfName As String, savePath As String
+
+    ' Assuming you have the mail merge main document active
+    Set mainDoc = ActiveDocument
+    With mainDoc.MailMerge
+        ' Open the data source
+        .OpenDataSource Name:=mainDoc.MailMerge.DataSource.Name
+
+        recordCount = .DataSource.RecordCount
+
+        ' Loop through each record (or letter) in the mail merge
+        For i = 1 To recordCount
+            With .DataSource
+                .ActiveRecord = i
+
+                ' Get the data from the data source
+                participantID = .DataFields("Participant ID (UPIN)").Value
+                firstName = .DataFields("First Name").Value
+                lastName = .DataFields("Last Name").Value
+
+            End With
+
+            ' Define the name of the PDF file
+            pdfName = participantID & " - " & firstName & " " & lastName & ".pdf"
+
+            ' Define where to save the PDF (for now, we're using the current directory)
+            ' You can change this to a specific directory if needed
+            savePath = mainDoc.Path & "\" & pdfName
+
+            ' Execute the mail merge for the current record only
+            mainDoc.MailMerge.Destination = wdSendToNewDocument
+            mainDoc.MailMerge.SuppressBlankLines = True
+            With mainDoc.MailMerge
+                .DataSource.FirstRecord = i
+                .DataSource.LastRecord = i
+                .Execute Pause:=False
+            End With
+
+            ' Save the new document as a PDF
+            Set targetDoc = ActiveDocument
+            targetDoc.SaveAs2 FileName:=savePath, FileFormat:=wdFormatPDF
+
+            ' Close the new document without saving changes
+            targetDoc.Close False
+
+        Next i
+
+    End With
+
+    ' Clean up
+    Set mainDoc = Nothing
+    Set targetDoc = Nothing
+
+End Sub
