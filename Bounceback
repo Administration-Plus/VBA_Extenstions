@@ -1,93 +1,146 @@
 Option Explicit
 
+' Scans unread messages in the Deleted Items folder for common
+' bounce‑back emails and exports any unique addresses found in the body
+' to a new Excel workbook. Requires no additional references.
+
 Sub ExtractEmailsFromUnreadDeletedItems()
-    
+
     ' === 1. Set up Outlook objects ===
     Dim olNs As Outlook.NameSpace
     Dim deletedItemsFolder As Outlook.Folder
-    Dim mailItem As Outlook.mailItem
-    
+    Dim items As Outlook.Items
+    Dim filteredItems As Outlook.Items
+    Dim mailItem As Outlook.MailItem
+
+    On Error GoTo ErrorHandler
+
     Set olNs = Application.GetNamespace("MAPI")
     Set deletedItemsFolder = olNs.GetDefaultFolder(olFolderDeletedItems)
-    
+
+    ' Restrict to unread messages for efficiency
+    Set items = deletedItemsFolder.Items
+    Set filteredItems = items.Restrict("[UnRead] = True")
+
     ' === 2. Create Excel objects (late binding) ===
     Dim xlApp As Object
     Dim xlWkb As Object
     Dim xlSht As Object
-    
+    Dim startedExcel As Boolean
+
     On Error Resume Next
     Set xlApp = GetObject(Class:="Excel.Application")
-    If xlApp Is Nothing Then
+    If Err.Number <> 0 Then
+        Err.Clear
         Set xlApp = CreateObject("Excel.Application")
+        startedExcel = True
     End If
-    On Error GoTo 0
-    
-    ' Make Excel visible or hide it (your choice)
+
     xlApp.Visible = True
-    
-    ' Create a brand-new workbook
+    If Err.Number <> 0 Then
+        Err.Clear
+        Set xlApp = CreateObject("Excel.Application")
+        startedExcel = True
+        xlApp.Visible = True
+    End If
+    On Error GoTo ErrorHandler
+
     Set xlWkb = xlApp.Workbooks.Add
     Set xlSht = xlWkb.Sheets(1)
     xlSht.Name = "Extracted Emails"
-    
-    ' Set up a header (optional)
     xlSht.Cells(1, 1).Value = "Email Address"
-    
+
+    ' Dictionary to prevent duplicate entries
+    Dim dict As Object
+    Set dict = CreateObject("Scripting.Dictionary")
+
     Dim nextRow As Long
-    nextRow = 2  ' Start writing data from row 2
-    
-    ' === 3. Iterate through deleted items ===
-    Dim iItem As Long
-    For iItem = deletedItemsFolder.items.Count To 1 Step -1
-        
-        If TypeName(deletedItemsFolder.items(iItem)) = "MailItem" Then
-            Set mailItem = deletedItemsFolder.items(iItem)
-            
-            ' Only process unread messages
-            If mailItem.UnRead = True Then
-                
-                Dim emailList As Collection
+    nextRow = 2
+
+    ' === 3. Iterate through unread deleted items ===
+    Dim i As Long
+    Dim emailList As Collection
+    Dim addr As Variant
+
+    For i = 1 To filteredItems.Count
+        If TypeName(filteredItems(i)) = "MailItem" Then
+            Set mailItem = filteredItems(i)
+
+            If IsBounceBack(mailItem) Then
                 Set emailList = ExtractAllEmails(mailItem.Body)
-                
-                ' Write each extracted email to Excel
-                Dim addr As Variant
+
                 For Each addr In emailList
-                    xlSht.Cells(nextRow, 1).Value = addr
-                    nextRow = nextRow + 1
+                    If Not dict.Exists(addr) Then
+                        dict.Add addr, True
+                        xlSht.Cells(nextRow, 1).Value = addr
+                        nextRow = nextRow + 1
+                    End If
                 Next addr
+
+                ' Mark message as read so it is not processed again
+                mailItem.UnRead = False
+                mailItem.Save
             End If
         End If
-    Next iItem
-    
-    ' === 4. Cleanup ===
+    Next i
+
+    ' === 4. Save workbook to Desktop ===
+    Dim savePath As String
+    savePath = Environ$("USERPROFILE") & "\Desktop\Bounceback_" & _
+               Format(Now, "yyyymmdd_hhnnss") & ".xlsx"
+    xlWkb.SaveAs savePath
+
+Cleanup:
+    Set emailList = Nothing
+    Set dict = Nothing
     Set mailItem = Nothing
+    Set filteredItems = Nothing
+    Set items = Nothing
     Set deletedItemsFolder = Nothing
     Set olNs = Nothing
-    
-    ' Optional: you can save the workbook or prompt the user to save
-    ' e.g.: xlWkb.SaveAs "C:\path\to\ExtractedEmails.xlsx"
-    ' or just leave it open for the user
-    
-    MsgBox "Finished extracting emails!", vbInformation
 
+    If Not xlWkb Is Nothing Then xlWkb.Close SaveChanges:=False
+    If startedExcel Then xlApp.Quit
+    Set xlSht = Nothing
+    Set xlWkb = Nothing
+    Set xlApp = Nothing
+
+    MsgBox "Finished extracting emails!" & vbCrLf & _
+           "Saved to: " & savePath, vbInformation
+    Exit Sub
+
+ErrorHandler:
+    MsgBox "Error: " & Err.Description, vbExclamation
+    Resume Cleanup
 End Sub
+
+Private Function IsBounceBack(mi As Outlook.MailItem) As Boolean
+    Dim subj As String
+    subj = LCase$(mi.Subject)
+
+    If InStr(subj, "undeliverable") > 0 _
+        Or InStr(subj, "delivery status notification") > 0 _
+        Or InStr(subj, "mail delivery failed") > 0 Then
+        IsBounceBack = True
+    End If
+End Function
 
 Private Function ExtractAllEmails(ByVal text As String) As Collection
     ' Uses a RegEx to return all email addresses found in `text`
     ' Returns them as a collection of strings
-    
+
     Dim re As Object ' VBScript.RegExp
     Dim matches As Object
     Dim matchItem As Object
-    
+
     Set ExtractAllEmails = New Collection
-    
+
     ' Create the RegExp object
     Set re = CreateObject("VBScript.RegExp")
-    re.Pattern = "[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}"
+    re.Pattern = "[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}"
     re.IgnoreCase = True
     re.Global = True
-    
+
     If re.Test(text) Then
         Set matches = re.Execute(text)
         For Each matchItem In matches
@@ -95,4 +148,3 @@ Private Function ExtractAllEmails(ByVal text As String) As Collection
         Next matchItem
     End If
 End Function
-
